@@ -1,0 +1,15 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY config/              ./config/
+COPY wait_for_services.py .
+COPY consumers/           ./consumers/
+
+ENV PYTHONUNBUFFERED=1
+
+# El CMD se sobreescribe en docker-compose para cada consumer
+CMD ["python", "consumers/transaction_consumer.py"]

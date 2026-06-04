@@ -1,0 +1,160 @@
+version: '3.8'
+
+services:
+
+  # ── Broker ──────────────────────────────────────────────────────────────────
+  rabbitmq:
+    image: rabbitmq:3.12-management
+    container_name: rabbitmq_banking
+    ports:
+      - "5672:5672"
+      - "15672:15672"      # Panel admin → http://localhost:15672
+    environment:
+      RABBITMQ_DEFAULT_USER:  admin
+      RABBITMQ_DEFAULT_PASS:  admin123
+      RABBITMQ_DEFAULT_VHOST: banking
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ── Bases de datos ───────────────────────────────────────────────────────────
+  db_transactions:
+    image: postgres:16-alpine
+    container_name: db_transactions
+    environment:
+      POSTGRES_USER:     admin
+      POSTGRES_PASSWORD: admin123
+      POSTGRES_DB:       transactions_db
+    volumes:
+      - db_transactions_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d transactions_db"]
+      interval: 5s
+      retries: 10
+
+  db_alerts:
+    image: postgres:16-alpine
+    container_name: db_alerts
+    environment:
+      POSTGRES_USER:     admin
+      POSTGRES_PASSWORD: admin123
+      POSTGRES_DB:       alerts_db
+    volumes:
+      - db_alerts_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d alerts_db"]
+      interval: 5s
+      retries: 10
+
+  db_fraud:
+    image: postgres:16-alpine
+    container_name: db_fraud
+    environment:
+      POSTGRES_USER:     admin
+      POSTGRES_PASSWORD: admin123
+      POSTGRES_DB:       fraud_db
+    volumes:
+      - db_fraud_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d fraud_db"]
+      interval: 5s
+      retries: 10
+
+  # ── Productor ────────────────────────────────────────────────────────────────
+  producer:
+    build:
+      context: .
+      dockerfile: Dockerfile.producer
+    container_name: bank_producer
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST:      rabbitmq
+      RABBITMQ_VHOST:     banking
+      RABBITMQ_USER:      admin
+      RABBITMQ_PASS:      admin123
+      PUBLISH_INTERVAL:   "10"
+    restart: unless-stopped
+
+  # ── Consumidor 1 — Transacciones (Topic) ────────────────────────────────────
+  consumer_transactions:
+    build:
+      context: .
+      dockerfile: Dockerfile.consumer
+    container_name: consumer_transactions
+    command: >
+      sh -c "python wait_for_services.py && python consumers/transaction_consumer.py"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      db_transactions:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_VHOST: banking
+      RABBITMQ_USER:  admin
+      RABBITMQ_PASS:  admin123
+      DB_HOST:        db_transactions
+      DATABASE_URL:   postgresql://admin:admin123@db_transactions:5432/transactions_db
+    ports:
+      - "5001:5001"
+    restart: unless-stopped
+
+  # ── Consumidor 2 — Alertas (Fanout) ─────────────────────────────────────────
+  consumer_alerts:
+    build:
+      context: .
+      dockerfile: Dockerfile.consumer
+    container_name: consumer_alerts
+    command: >
+      sh -c "python wait_for_services.py && python consumers/alert_consumer.py"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      db_alerts:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST:  rabbitmq
+      RABBITMQ_VHOST: banking
+      RABBITMQ_USER:  admin
+      RABBITMQ_PASS:  admin123
+      DB_HOST:        db_alerts
+      DATABASE_URL:   postgresql://admin:admin123@db_alerts:5432/alerts_db
+    ports:
+      - "5002:5002"
+    restart: unless-stopped
+
+  # ── Consumidor 3 — Fraude (Direct) ──────────────────────────────────────────
+  consumer_fraud:
+    build:
+      context: .
+      dockerfile: Dockerfile.consumer
+    container_name: consumer_fraud
+    command: >
+      sh -c "python wait_for_services.py && python consumers/fraud_consumer.py"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      db_fraud:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST:  rabbitmq
+      RABBITMQ_VHOST: banking
+      RABBITMQ_USER:  admin
+      RABBITMQ_PASS:  admin123
+      DB_HOST:        db_fraud
+      DATABASE_URL:   postgresql://admin:admin123@db_fraud:5432/fraud_db
+    ports:
+      - "5003:5003"
+    restart: unless-stopped
+
+volumes:
+  rabbitmq_data:
+  db_transactions_data:
+  db_alerts_data:
+  db_fraud_data:

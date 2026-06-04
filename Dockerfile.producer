@@ -1,0 +1,14 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY config/        ./config/
+COPY wait_for_services.py .
+COPY producer/bank_producer.py ./producer/bank_producer.py
+
+ENV PYTHONUNBUFFERED=1
+
+CMD ["sh", "-c", "python wait_for_services.py && python producer/bank_producer.py"]
